@@ -1,2 +1,18 @@
-__pycache__
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+
+# Environment
 .env
+.env.*
+
+# macOS
+.DS_Store
+
+# CodeCarbon
+codecarbon-output/
