@@ -5,8 +5,11 @@ __pycache__/
 *.pyd
 *.egg-info/
 .venv/
+.venv
 venv/
 .env
+env
+.env/
 
 # Environment
 .env
@@ -16,4 +19,5 @@ venv/
 .DS_Store
 
 # CodeCarbon
-codecarbon-output/
+codecarbon_output/*
+!codecarbon_output/.gitkeep
