@@ -1,2 +1,2 @@
-def d():
-    return 5
+def compute(a: int, b: int) -> int:
+    return a*a + b*b + a*b

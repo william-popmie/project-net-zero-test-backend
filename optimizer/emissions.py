@@ -18,7 +18,18 @@ def get_func_name(code: str) -> str:
     raise ValueError("No function definition found in code")
 
 
-def make_runner(code: str, func_name: str, iterations: int) -> str:
+def get_func_call(code: str) -> str:
+    """Return a zero-argument call expression for the first function, e.g. 'f(0, 0)'."""
+    tree = ast.parse(code)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            n_args = len(node.args.args)
+            args = ", ".join(["0"] * n_args)
+            return f"{node.name}({args})"
+    raise ValueError("No function definition found in code")
+
+
+def make_runner(code: str, func_call: str, iterations: int) -> str:
     """Build the subprocess runner script."""
     project_dir_repr = json.dumps(PROJECT_DIR)
     return f"""import json, sys, os
@@ -36,7 +47,7 @@ tracker = EmissionsTracker(
 )
 tracker.start()
 for _ in range({iterations}):
-    {func_name}()
+    {func_call}
 tracker.stop()
 
 emissions = tracker.final_emissions or 0.0
@@ -49,8 +60,8 @@ print(json.dumps({{"emissions": emissions, "energy": energy}}))
 
 def run_emissions(code: str, iterations: int = ITERATIONS) -> float:
     """Run code in a subprocess under CodeCarbon. Returns kg CO2eq."""
-    func_name = get_func_name(code)
-    runner_src = make_runner(code, func_name, iterations)
+    func_call = get_func_call(code)
+    runner_src = make_runner(code, func_call, iterations)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         f.write(runner_src)
