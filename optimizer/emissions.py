@@ -9,24 +9,23 @@ import tempfile
 from optimizer.state import ITERATIONS, PYTHON, PROJECT_DIR
 
 
-def get_func_name(code: str) -> str:
-    """Parse code with ast to find the first function name."""
+def get_named_func_call(code: str, func_name: str) -> str:
+    """Return a call expression for the named function using default/placeholder values."""
     tree = ast.parse(code)
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef):
-            return node.name
-    raise ValueError("No function definition found in code")
-
-
-def get_func_call(code: str) -> str:
-    """Return a zero-argument call expression for the first function, e.g. 'f(0, 0)'."""
-    tree = ast.parse(code)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef):
+        if isinstance(node, ast.FunctionDef) and node.name == func_name:
             n_args = len(node.args.args)
-            args = ", ".join(["0"] * n_args)
-            return f"{node.name}({args})"
-    raise ValueError("No function definition found in code")
+            n_defaults = len(node.args.defaults)
+            n_no_default = n_args - n_defaults
+            arg_values = []
+            for i in range(n_args):
+                default_idx = i - n_no_default
+                if default_idx >= 0:
+                    arg_values.append(ast.unparse(node.args.defaults[default_idx]))
+                else:
+                    arg_values.append("1")
+            return f"{func_name}({', '.join(arg_values)})"
+    raise ValueError(f"Function '{func_name}' not found in code")
 
 
 def make_runner(code: str, func_call: str, iterations: int) -> str:
@@ -58,9 +57,21 @@ print(json.dumps({{"emissions": emissions, "energy": energy}}))
 """
 
 
-def run_emissions(code: str, iterations: int = ITERATIONS) -> float:
-    """Run code in a subprocess under CodeCarbon. Returns kg CO2eq."""
-    func_call = get_func_call(code)
+def run_emissions(
+    code: str,
+    func_name: str,
+    iterations: int = ITERATIONS,
+    python_interpreter: str = PYTHON,
+) -> float:
+    """Run code in a subprocess under CodeCarbon. Returns kg CO2eq.
+
+    Args:
+        code: Full file context (preamble + all functions).
+        func_name: Name of the function to benchmark.
+        iterations: Number of loop iterations for the benchmark.
+        python_interpreter: Path to the Python interpreter to use.
+    """
+    func_call = get_named_func_call(code, func_name)
     runner_src = make_runner(code, func_call, iterations)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
@@ -69,7 +80,7 @@ def run_emissions(code: str, iterations: int = ITERATIONS) -> float:
 
     try:
         result = subprocess.run(
-            [PYTHON, tmp_path],
+            [python_interpreter, tmp_path],
             capture_output=True,
             text=True,
             timeout=120,

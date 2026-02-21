@@ -6,10 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Requires .env with ANTHROPIC_API_KEY set
-venv/bin/python optimizer.py
+venv/bin/python main.py
 ```
 
-The script reads `input_data/mock-data-2.json`, optimizes the `unoptimized_code` field using Claude, and writes the result back to `optimized_code` in the same file.
+Reads `input_data/unoptimized_code.py` and `input_data/test_code.py`, optimizes the code using Claude, and writes the result to `input_data/optimized_code.py`.
+
+## Validate CodeCarbon setup
+
+```bash
+venv/bin/python test_scripts/test_codecarbon.py
+```
 
 ## Environment setup
 
@@ -20,11 +26,24 @@ Create a `.env` file at the project root:
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
+CodeCarbon is configured via `.codecarbon.config` (output dir: `codecarbon_output/`, tracking mode: process).
+
 ## Architecture
 
-`optimizer.py` implements a LangGraph state machine that iteratively optimizes Python functions for lower carbon emissions:
+`main.py` reads input files, builds the initial `OptimizationState`, and invokes the LangGraph state machine defined in the `optimizer/` package.
 
-**State flow:**
+### optimizer/ package
+
+| File | Purpose |
+|------|---------|
+| `graph.py` | LangGraph graph definition and conditional routing |
+| `nodes.py` | Node implementations: `node_measure_baseline`, `node_optimize`, `node_run_tests`, `node_measure_emissions`, `node_output` |
+| `emissions.py` | Subprocess-isolated CodeCarbon measurement via `run_emissions()` |
+| `state.py` | `OptimizationState` TypedDict; path constants `PYTHON`, `INPUT_DIR`, `UNOPTIMIZED_FILE`, `TEST_FILE`, `OPTIMIZED_FILE`; `ITERATIONS = 1_000_000` |
+| `utils.py` | `strip_markdown()` to remove ``` fences from LLM responses |
+
+### State flow
+
 ```
 START → measure_baseline → optimize → run_tests
                                           ↓ (pass)       ↓ (fail, retries left)
@@ -33,14 +52,11 @@ START → measure_baseline → optimize → run_tests
                                         output → END
 ```
 
-**Key design decisions:**
-- Emission measurement runs code in a **subprocess** (not in-process) via `run_emissions()` to isolate CodeCarbon's `EmissionsTracker`. The runner script is written to a tempfile, executed with `venv/bin/python`, and the result is parsed from JSON on stdout.
-- Tests are run **in-process** via `exec()` in `node_run_tests()`.
-- Up to 5 attempts by default (`max_attempts`). Failed attempts accumulate in `state["feedback"]` and are fed back to Claude on the next attempt.
-- The best-emissions code (not just the last) is tracked in `state["best_code"]` / `state["best_emissions"]` and written to the JSON on exit.
+### Key design decisions
 
-**Input data formats:**
-- `mock-data-2.json` — flat format: `{unoptimized_code, test_code, optimized_code}`
-- `mock-data.json` — graph format: nodes with `depends_on`/`depended_by`, `execution_order`, top-level `original_code`/`optimized_code`/`spec_code`
-
-**CodeCarbon output** is written to `codecarbon_output/` (tracked in git).
+- **Subprocess isolation**: `run_emissions()` in `emissions.py` writes a runner script to a tempfile and executes it via `venv/bin/python` to avoid CodeCarbon's singleton `EmissionsTracker` conflicts. JSON result is parsed from stdout.
+- **In-process test execution**: `node_run_tests()` runs tests via `exec()`. Test functions are discovered by scanning the namespace for callables prefixed with `test_`.
+- **Best-effort tracking**: `state["best_code"]` / `state["best_emissions"]` track the lowest-emissions valid result across all attempts. Only best code is written to `optimized_code.py` on exit.
+- **Feedback accumulation**: Failed attempts (test failures or no emission improvement) append error messages to `state["feedback"]`, which are included in Claude's next prompt.
+- **Emissions runner**: `emissions.py` uses `ast` to auto-detect the function name and argument count, then generates a zero-argument call (e.g. `f(0, 0)`) to loop `ITERATIONS` times under the tracker.
+- **Model**: Claude Sonnet 4.6 (`claude-sonnet-4-6`) is called from `node_optimize()`.
